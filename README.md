@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/danylaporte/fixed_size_lru_map.svg?branch=master)](https://travis-ci.org/danylaporte/fixed_size_lru_map)
+
 A fixed size cache that keeps only the most recently used values.
 
 ## Example
