@@ -2,6 +2,9 @@
 
 A fixed size cache that keeps only the most recently used values.
 
+## Documentation
+[API Documentation](https://danylaporte.github.io/fixed_size_lru_map/fixed_size_lru_map)
+
 ## Example
 
 ```rust

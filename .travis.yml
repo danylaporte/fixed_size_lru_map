@@ -13,7 +13,7 @@ script:
   - cargo test --verbose
 
 before_deploy:
-  - cargo doc
+  - cargo doc --no-deps
 
 deploy:
   provider: pages
