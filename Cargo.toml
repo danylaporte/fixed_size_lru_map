@@ -1,0 +1,10 @@
+[package]
+name = "fixed_size_lru_map"
+edition = "2018"
+version = "0.1.0"
+authors = ["Dany Laporte <dany_laporte@hotmail.com>"]
+
+[dependencies]
+arc-swap = "0.3"
+
+[dev-dependencies]
