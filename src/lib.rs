@@ -1,4 +1,5 @@
-//! A fixed size cache that keeps only the most recently used values.
+//! A fixed size map that keeps only the most recently used values.
+//! This can be used like a cache and it is thread safe.
 //!
 //! # Example
 //! ```
@@ -24,7 +25,7 @@ use std::sync::Arc;
 pub struct FixedSizeLruMap<K, V, S = RandomState> {
     age: AtomicUsize,
     capacity: usize,
-    map: ArcSwap<HashMap<K, CacheGuard<V>, S>>,
+    map: ArcSwap<HashMap<K, MapGuard<V>, S>>,
 }
 
 impl<K, V> FixedSizeLruMap<K, V>
@@ -56,17 +57,17 @@ where
         self.map.lease().contains_key(key)
     }
 
-    pub fn get(&self, key: &K) -> Option<CacheGuard<V>> {
+    pub fn get(&self, key: &K) -> Option<MapGuard<V>> {
         match self.map.lease().get(key) {
             Some(guard) => {
                 self.update_guard_age(guard);
-                Some(CacheGuard::clone(&guard))
+                Some(MapGuard::clone(&guard))
             }
             None => None,
         }
     }
 
-    pub fn get_or_init<F>(&self, key: K, f: F) -> CacheGuard<V>
+    pub fn get_or_init<F>(&self, key: K, f: F) -> MapGuard<V>
     where
         F: FnOnce() -> V,
         K: Clone,
@@ -74,27 +75,18 @@ where
     {
         match self.get(&key) {
             Some(value) => value,
-            None => self.internal_insert(key, f()).0,
+            None => self.insert(key, f()).0,
         }
     }
 
-    #[inline]
-    pub fn insert(&self, key: K, value: V) -> Option<CacheGuard<V>>
-    where
-        K: Clone,
-        S: Clone,
-    {
-        self.internal_insert(key, value).1
-    }
-
-    fn internal_insert(&self, key: K, value: V) -> (CacheGuard<V>, Option<CacheGuard<V>>)
+    pub fn insert(&self, key: K, value: V) -> (MapGuard<V>, Option<MapGuard<V>>)
     where
         K: Clone,
         S: Clone,
     {
         let age = self.age.fetch_add(1, Ordering::SeqCst);
 
-        let guard = CacheGuard(Arc::new(Inner {
+        let guard = MapGuard(Arc::new(Inner {
             age: AtomicUsize::new(age),
             value,
         }));
@@ -132,7 +124,7 @@ where
         self.map.lease().len()
     }
 
-    pub fn remove(&self, key: &K) -> Option<CacheGuard<V>>
+    pub fn remove(&self, key: &K) -> Option<MapGuard<V>>
     where
         K: Clone,
         S: Clone,
@@ -152,30 +144,30 @@ where
         value
     }
 
-    fn update_guard_age(&self, guard: &CacheGuard<V>) {
+    fn update_guard_age(&self, guard: &MapGuard<V>) {
         let v = self.age.fetch_add(1, Ordering::SeqCst);
         guard.0.age.swap(v, Ordering::Relaxed);
     }
 }
 
-pub struct CacheGuard<V>(Arc<Inner<V>>);
+pub struct MapGuard<V>(Arc<Inner<V>>);
 
-impl<V> CacheGuard<V> {
-    pub fn try_unwrap(this: CacheGuard<V>) -> Result<V, CacheGuard<V>> {
+impl<V> MapGuard<V> {
+    pub fn try_unwrap(this: MapGuard<V>) -> Result<V, MapGuard<V>> {
         match Arc::try_unwrap(this.0) {
             Ok(inner) => Ok(inner.value),
-            Err(arc) => Err(CacheGuard(arc)),
+            Err(arc) => Err(MapGuard(arc)),
         }
     }
 }
 
-impl<V> Clone for CacheGuard<V> {
+impl<V> Clone for MapGuard<V> {
     fn clone(&self) -> Self {
-        CacheGuard(Arc::clone(&self.0))
+        MapGuard(Arc::clone(&self.0))
     }
 }
 
-impl<V> Deref for CacheGuard<V> {
+impl<V> Deref for MapGuard<V> {
     type Target = V;
 
     #[inline]
@@ -184,9 +176,9 @@ impl<V> Deref for CacheGuard<V> {
     }
 }
 
-impl<V> Eq for CacheGuard<V> where V: Eq {}
+impl<V> Eq for MapGuard<V> where V: Eq {}
 
-impl<V> Hash for CacheGuard<V>
+impl<V> Hash for MapGuard<V>
 where
     V: Hash,
 {
@@ -195,7 +187,7 @@ where
     }
 }
 
-impl<V> Ord for CacheGuard<V>
+impl<V> Ord for MapGuard<V>
 where
     V: Ord,
 {
@@ -204,7 +196,7 @@ where
     }
 }
 
-impl<V> PartialEq for CacheGuard<V>
+impl<V> PartialEq for MapGuard<V>
 where
     V: PartialEq,
 {
@@ -213,7 +205,7 @@ where
     }
 }
 
-impl<V> PartialOrd for CacheGuard<V>
+impl<V> PartialOrd for MapGuard<V>
 where
     V: PartialOrd,
 {
