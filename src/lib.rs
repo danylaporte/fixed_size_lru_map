@@ -54,11 +54,11 @@ where
     }
 
     pub fn contains_key(&self, key: &K) -> bool {
-        self.map.lease().contains_key(key)
+        self.map.load().contains_key(key)
     }
 
     pub fn get(&self, key: &K) -> Option<MapGuard<V>> {
-        match self.map.lease().get(key) {
+        match self.map.load().get(key) {
             Some(guard) => {
                 self.update_guard_age(guard);
                 Some(MapGuard::clone(&guard))
@@ -117,11 +117,11 @@ where
     }
 
     pub fn is_empty(&self) -> bool {
-        self.map.lease().is_empty()
+        self.map.load().is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.map.lease().len()
+        self.map.load().len()
     }
 
     pub fn remove(&self, key: &K) -> Option<MapGuard<V>>
