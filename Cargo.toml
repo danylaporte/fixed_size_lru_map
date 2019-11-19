@@ -1,10 +1,10 @@
 [package]
 name = "fixed_size_lru_map"
 edition = "2018"
-version = "0.2.0"
+version = "0.3.0"
 authors = ["Dany Laporte <dany_laporte@hotmail.com>"]
 
 [dependencies]
-arc-swap = "0.4"
+parking_lot  = "0.9"
 
 [dev-dependencies]

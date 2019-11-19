@@ -15,17 +15,21 @@
 //!     assert_eq!(1, map.len());
 //! }
 //! ```
-use arc_swap::ArcSwap;
-use std::collections::hash_map::{HashMap, RandomState};
-use std::hash::{BuildHasher, Hash, Hasher};
-use std::ops::Deref;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use parking_lot::RwLock;
+use std::{
+    collections::hash_map::{HashMap, RandomState},
+    hash::{BuildHasher, Hash, Hasher},
+    ops::Deref,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
+};
 
 pub struct FixedSizeLruMap<K, V, S = RandomState> {
-    age: AtomicUsize,
+    age: AtomicU64,
     capacity: usize,
-    map: ArcSwap<HashMap<K, MapGuard<V>, S>>,
+    map: RwLock<HashMap<K, MapGuard<V>, S>>,
 }
 
 impl<K, V> FixedSizeLruMap<K, V>
@@ -44,34 +48,30 @@ where
 {
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         FixedSizeLruMap {
-            age: AtomicUsize::new(0),
+            age: AtomicU64::new(0),
             capacity: capacity,
-            map: ArcSwap::from(Arc::new(HashMap::with_capacity_and_hasher(
+            map: RwLock::from(HashMap::with_capacity_and_hasher(
                 capacity + 1,
                 hash_builder,
-            ))),
+            )),
         }
     }
 
     pub fn contains_key(&self, key: &K) -> bool {
-        self.map.load().contains_key(key)
+        self.map.read().contains_key(key)
     }
 
     pub fn get(&self, key: &K) -> Option<MapGuard<V>> {
-        match self.map.load().get(key) {
-            Some(guard) => {
-                self.update_guard_age(guard);
-                Some(MapGuard::clone(&guard))
-            }
-            None => None,
-        }
+        let map = self.map.read();
+        let guard = map.get(key)?;
+        self.update_guard_age(guard);
+        Some(MapGuard::clone(&guard))
     }
 
     pub fn get_or_init<F>(&self, key: K, f: F) -> MapGuard<V>
     where
         F: FnOnce() -> V,
         K: Clone,
-        S: Clone,
     {
         match self.get(&key) {
             Some(value) => value,
@@ -82,80 +82,57 @@ where
     pub fn insert(&self, key: K, value: V) -> (MapGuard<V>, Option<MapGuard<V>>)
     where
         K: Clone,
-        S: Clone,
     {
+        let mut map = self.map.write();
         let age = self.age.fetch_add(1, Ordering::SeqCst);
+        let guard = MapGuard(Arc::new((AtomicU64::new(age), value)));
+        let mut old = map.insert(key, guard.clone());
 
-        let guard = MapGuard(Arc::new(Inner {
-            age: AtomicUsize::new(age),
-            value,
-        }));
-
-        let mut old = None;
-
-        self.map.rcu(|map| {
-            let mut map = HashMap::clone(&map);
-            old = map.insert(key.clone(), guard.clone());
-
-            if old.is_none() && map.len() > self.capacity {
-                // find the last used key
-                let key = map
-                    .iter()
-                    .min_by(|l, r| (l.1).0.age().cmp(&(r.1).0.age()))
-                    .map(|t| t.0)
-                    .cloned();
-
-                if let Some(key) = key {
-                    map.remove(&key);
-                }
+        if old.is_none() && map.len() > self.capacity {
+            if let Some(key) = map
+                .iter()
+                .min_by_key(|(_, v)| v.age())
+                .map(|(k, _)| k.clone())
+            {
+                old = map.remove(&key);
             }
-
-            map
-        });
+        }
 
         (guard, old)
     }
 
     pub fn is_empty(&self) -> bool {
-        self.map.load().is_empty()
+        self.map.read().is_empty()
     }
 
     pub fn len(&self) -> usize {
-        self.map.load().len()
+        self.map.read().len()
     }
 
-    pub fn remove(&self, key: &K) -> Option<MapGuard<V>>
-    where
-        K: Clone,
-        S: Clone,
-    {
-        if !self.contains_key(key) {
-            return None;
-        }
-
-        let mut value = None;
-
-        self.map.rcu(|map| {
-            let mut map = HashMap::clone(&map);
-            value = map.remove(key);
-            map
-        });
-
-        value
+    pub fn remove(&self, key: &K) -> Option<MapGuard<V>> {
+        self.map.write().remove(key)
     }
 
     fn update_guard_age(&self, guard: &MapGuard<V>) {
         let v = self.age.fetch_add(1, Ordering::SeqCst);
-        guard.0.age.swap(v, Ordering::Relaxed);
+        guard.set_age(v);
     }
 }
 
-pub struct MapGuard<V>(Arc<Inner<V>>);
+pub struct MapGuard<V>(Arc<(AtomicU64, V)>);
 
 impl<V> MapGuard<V> {
+    fn age(&self) -> u64 {
+        (self.0).0.load(Ordering::Relaxed)
+    }
+
+    fn set_age(&self, value: u64) {
+        (self.0).0.store(value, Ordering::Relaxed);
+    }
+
     pub fn try_unwrap(this: MapGuard<V>) -> Result<V, MapGuard<V>> {
         match Arc::try_unwrap(this.0) {
-            Ok(inner) => Ok(inner.value),
+            Ok(inner) => Ok(inner.1),
             Err(arc) => Err(MapGuard(arc)),
         }
     }
@@ -172,7 +149,7 @@ impl<V> Deref for MapGuard<V> {
 
     #[inline]
     fn deref(&self) -> &Self::Target {
-        &self.0.value
+        &(self.0).1
     }
 }
 
@@ -183,7 +160,7 @@ where
     V: Hash,
 {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.0.value.hash(state)
+        (self.0).1.hash(state)
     }
 }
 
@@ -192,7 +169,7 @@ where
     V: Ord,
 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.value.cmp(&other.0.value)
+        (self.0).1.cmp(&(other.0).1)
     }
 }
 
@@ -201,7 +178,7 @@ where
     V: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
-        self.0.value == other.0.value
+        (self.0).1 == (other.0).1
     }
 }
 
@@ -210,17 +187,6 @@ where
     V: PartialOrd,
 {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.0.value.partial_cmp(&other.0.value)
-    }
-}
-
-struct Inner<V> {
-    age: AtomicUsize,
-    value: V,
-}
-
-impl<V> Inner<V> {
-    fn age(&self) -> usize {
-        self.age.load(Ordering::Relaxed)
+        (self.0).1.partial_cmp(&(other.0).1)
     }
 }
