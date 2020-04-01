@@ -190,3 +190,34 @@ where
         (self.0).1.partial_cmp(&(other.0).1)
     }
 }
+
+#[test]
+fn test_deadlocks() {
+    use std::{
+        thread::{sleep, spawn},
+        time::Duration,
+    };
+
+    for _ in 0..10 {
+        let map = Arc::new(FixedSizeLruMap::with_capacity(3));
+        let map1 = map.clone();
+        let map2 = map.clone();
+        let dur = Duration::from_millis(15);
+
+        let a = spawn(move || {
+            map1.get_or_init(0, || {
+                sleep(dur);
+                'a'
+            })
+        });
+        let b = spawn(move || {
+            map2.get_or_init(1, || {
+                sleep(dur);
+                'b'
+            })
+        });
+
+        let _ = a.join();
+        let _ = b.join();
+    }
+}
