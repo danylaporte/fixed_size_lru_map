@@ -1,0 +1,3 @@
+(function() {var implementors = {};
+implementors["fixed_size_lru_map"] = [{"text":"impl&lt;K, V, S&nbsp;=&nbsp;RandomState&gt; !Freeze for FixedSizeLruMap&lt;K, V, S&gt;","synthetic":true,"types":[]},{"text":"impl&lt;V&gt; Freeze for MapGuard&lt;V&gt;","synthetic":true,"types":[]}];
+if (window.register_implementors) {window.register_implementors(implementors);} else {window.pending_implementors = implementors;}})()
