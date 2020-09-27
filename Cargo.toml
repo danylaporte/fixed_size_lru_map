@@ -5,6 +5,6 @@ version = "0.4.0"
 authors = ["Dany Laporte <dany_laporte@hotmail.com>"]
 
 [dependencies]
-parking_lot  = "0.10"
+parking_lot  = "0.11"
 
 [dev-dependencies]
