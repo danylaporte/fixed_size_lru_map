@@ -5,15 +5,12 @@
 //! ```
 //! use fixed_size_lru_map::FixedSizeLruMap;
 //!
-//! fn main() {
-//!     let map = FixedSizeLruMap::with_capacity(2);
-//!     let a = *map.get_or_init("a", || 10);
-//!     let b = *map.get_or_init("a", || 12);
-//!
-//!     assert_eq!(10, a);
-//!     assert_eq!(10, b);
-//!     assert_eq!(1, map.len());
-//! }
+//! let map = FixedSizeLruMap::with_capacity(2);
+//! let a = *map.get_or_init("a", || 10);
+//! let b = *map.get_or_init("a", || 12);
+//! assert_eq!(10, a);
+//! assert_eq!(10, b);
+//! assert_eq!(1, map.len());
 //! ```
 use parking_lot::RwLock;
 use std::{
@@ -21,7 +18,7 @@ use std::{
     hash::{BuildHasher, Hash, Hasher},
     ops::Deref,
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicU64, Ordering::Relaxed},
         Arc,
     },
 };
@@ -49,7 +46,7 @@ where
     pub fn with_capacity_and_hasher(capacity: usize, hash_builder: S) -> Self {
         FixedSizeLruMap {
             age: AtomicU64::new(0),
-            capacity: capacity,
+            capacity,
             map: RwLock::from(HashMap::with_capacity_and_hasher(
                 capacity + 1,
                 hash_builder,
@@ -65,7 +62,7 @@ where
         let map = self.map.read();
         let guard = map.get(key)?;
         self.update_guard_age(guard);
-        Some(MapGuard::clone(&guard))
+        Some(MapGuard::clone(guard))
     }
 
     pub fn get_or_init<F>(&self, key: K, f: F) -> MapGuard<V>
@@ -84,7 +81,7 @@ where
         K: Clone,
     {
         let mut map = self.map.write();
-        let age = self.age.fetch_add(1, Ordering::SeqCst);
+        let age = self.age.fetch_add(1, Relaxed);
         let guard = MapGuard(Arc::new((AtomicU64::new(age), value)));
         let mut old = map.insert(key, guard.clone());
 
@@ -114,7 +111,7 @@ where
     }
 
     fn update_guard_age(&self, guard: &MapGuard<V>) {
-        let v = self.age.fetch_add(1, Ordering::SeqCst);
+        let v = self.age.fetch_add(1, Relaxed);
         guard.set_age(v);
     }
 }
@@ -123,11 +120,11 @@ pub struct MapGuard<V>(Arc<(AtomicU64, V)>);
 
 impl<V> MapGuard<V> {
     fn age(&self) -> u64 {
-        (self.0).0.load(Ordering::Relaxed)
+        (self.0).0.load(Relaxed)
     }
 
     fn set_age(&self, value: u64) {
-        (self.0).0.store(value, Ordering::Relaxed);
+        (self.0).0.store(value, Relaxed);
     }
 
     pub fn try_unwrap(this: MapGuard<V>) -> Result<V, MapGuard<V>> {
